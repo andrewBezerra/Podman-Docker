@@ -1,0 +1,50 @@
+# -----------------------------------------------------------------------------
+# Docker Compose / YAML
+# -----------------------------------------------------------------------------
+# Overrides locais (não comite configurações específicas da sua máquina)
+docker-compose.override.yml
+docker-compose.override.yaml
+compose.override.yml
+compose.override.yaml
+
+# Arquivos de ambiente (normalmente contêm segredos)
+.env
+.env.*
+!.env.example
+!.env.template
+!.env.sample
+
+# Segredos (use Docker secrets / vault / etc.)
+**/*secret*
+**/*secrets*
+**/*.key
+**/*.pem
+**/*.p12
+**/*.pfx
+
+# -----------------------------------------------------------------------------
+# Logs e arquivos temporários
+# -----------------------------------------------------------------------------
+*.log
+*.tmp
+*.swp
+*.swo
+*~
+
+# -----------------------------------------------------------------------------
+# OS / IDE
+# -----------------------------------------------------------------------------
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.iml
+
+# -----------------------------------------------------------------------------
+# Pastas de dados/volumes (se você versiona infra, geralmente NÃO versiona dados)
+# Ajuste conforme o seu compose (ex: ./data, ./volumes, ./postgres-data, etc.)
+# -----------------------------------------------------------------------------
+data/
+volumes/
+**/data/
+**/volumes/
