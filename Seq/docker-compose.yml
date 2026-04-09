@@ -1,0 +1,26 @@
+name: dev-local
+services:
+  seq:
+    image: datalust/seq:latest
+    deploy:
+      resources:
+        limits:
+          cpus: "0.50"
+          memory: 512M
+        reservations:
+          cpus: "0.25"
+          memory: 256M
+    container_name: seq-microservices
+    hostname: seq-microservices
+    ports:
+      - "5341:80"
+    environment:
+      - ACCEPT_EULA=Y
+      - SEQ_FIRSTRUN_ADMINUSERNAME=admin
+      - SEQ_FIRSTRUN_ADMINPASSWORD=admin
+    networks:
+      - microservices-net
+
+networks:
+  microservices-net:
+    driver: bridge

@@ -1,0 +1,22 @@
+version: '3.8'
+
+services:
+  keycloak:
+    image: quay.io/keycloak/keycloak:latest
+    container_name: keycloak
+    command: ["start-dev"]
+    environment:
+      - KEYCLOAK_ADMIN=admin
+      - KEYCLOAK_ADMIN_PASSWORD=admin
+      - KC_HOSTNAME=localhost
+      - KC_PROXY=edge
+      - KC_HTTP_ENABLED=true
+      - KC_LOG_LEVEL=INFO
+      - KC_SPI_THEME_DEFAULT=keycloak
+      - KC_THEME=custom
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./themes:/opt/keycloak/themes
+      - ./i18n:/opt/keycloak/i18n
+    restart: always

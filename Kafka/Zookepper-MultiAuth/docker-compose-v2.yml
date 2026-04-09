@@ -1,0 +1,116 @@
+version: "3.8"
+
+networks:
+  kafka-network:
+    driver: bridge
+
+services:
+  kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: kafka
+    hostname: kafka
+    networks:
+      - kafka-network
+    ports:
+      - "9092:9092"
+    environment:
+      # KRaft settings
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+
+      # Listeners
+      KAFKA_LISTENERS: SASL://0.0.0.0:9092,SASL_INTERNAL://0.0.0.0:19092,CONTROLLER://0.0.0.0:9093
+      KAFKA_ADVERTISED_LISTENERS: SASL://localhost:9092,SASL_INTERNAL://kafka:19092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: SASL:SASL_PLAINTEXT,SASL_INTERNAL:SASL_PLAINTEXT,CONTROLLER:PLAINTEXT
+
+      # SASL configuration
+      KAFKA_SASL_ENABLED_MECHANISMS: PLAIN,SCRAM-SHA-256,SCRAM-SHA-512
+
+      # JAAS config por listener
+      KAFKA_LISTENER_NAME_SASL_PLAIN_SASL_JAAS_CONFIG: 'org.apache.kafka.common.security.plain.PlainLoginModule required username="admin" password="admin-secret" user_admin="admin-secret" user_producer="producer-secret" user_consumer="consumer-secret";'
+
+      KAFKA_LISTENER_NAME_SASL_INTERNAL_PLAIN_SASL_JAAS_CONFIG: 'org.apache.kafka.common.security.plain.PlainLoginModule required username="admin" password="admin-secret" user_admin="admin-secret" user_producer="producer-secret" user_consumer="consumer-secret";'
+
+      # Inter-broker
+      KAFKA_INTER_BROKER_LISTENER_NAME: SASL_INTERNAL
+      KAFKA_SASL_MECHANISM_INTER_BROKER_PROTOCOL: PLAIN
+
+      # Cluster settings
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+
+      # Log dirs
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
+
+      # Cluster ID
+      CLUSTER_ID: MkU3OEVBNTcwNTJENDM2Qk
+
+      # KAFKA_OPTS referenciando arquivo JAAS
+      KAFKA_OPTS: "-Djava.security.auth.login.config=/etc/kafka/kafka_jaas.conf"
+
+    volumes:
+      - ./kafka_jaas.conf:/etc/kafka/kafka_jaas.conf
+      - kafka-data:/var/lib/kafka/data
+    command: >
+      bash -c "
+        if [ ! -f /var/lib/kafka/data/.kraft-formatted ]; then
+          /etc/confluent/docker/configure
+          kafka-storage format -t MkU3OEVBNTcwNTJENDM2Qk -c /etc/kafka/kafka.properties --ignore-formatted
+          touch /var/lib/kafka/data/.kraft-formatted
+        fi
+        /etc/confluent/docker/run
+      "
+    healthcheck:
+      test: >
+        bash -c '
+        cat > /tmp/healthcheck.properties << EOF
+        security.protocol=SASL_PLAINTEXT
+        sasl.mechanism=PLAIN
+        sasl.jaas.config=org.apache.kafka.common.security.plain.PlainLoginModule required username="admin" password="admin-secret";
+        EOF
+        kafka-broker-api-versions --bootstrap-server localhost:9092 --command-config /tmp/healthcheck.properties 2>/dev/null | grep -q ApiVersion
+        '
+      interval: 10s
+      timeout: 10s
+      retries: 15
+      start_period: 60s
+
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    container_name: kafka-ui
+    hostname: kafka-ui
+    networks:
+      - kafka-network
+    depends_on:
+      kafka:
+        condition: service_healthy
+    ports:
+      - "8080:8080"
+    environment:
+      DYNAMIC_CONFIG_ENABLED: "true"
+
+      KAFKA_CLUSTERS_0_NAME: SASL-PLAIN
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:19092
+      KAFKA_CLUSTERS_0_PROPERTIES_SECURITY_PROTOCOL: SASL_PLAINTEXT
+      KAFKA_CLUSTERS_0_PROPERTIES_SASL_MECHANISM: PLAIN
+      KAFKA_CLUSTERS_0_PROPERTIES_SASL_JAAS_CONFIG: 'org.apache.kafka.common.security.plain.PlainLoginModule required username="admin" password="admin-secret";'
+
+      KAFKA_CLUSTERS_1_NAME: SCRAM-SHA-256
+      KAFKA_CLUSTERS_1_BOOTSTRAPSERVERS: kafka:19092
+      KAFKA_CLUSTERS_1_PROPERTIES_SECURITY_PROTOCOL: SASL_PLAINTEXT
+      KAFKA_CLUSTERS_1_PROPERTIES_SASL_MECHANISM: SCRAM-SHA-256
+      KAFKA_CLUSTERS_1_PROPERTIES_SASL_JAAS_CONFIG: 'org.apache.kafka.common.security.scram.ScramLoginModule required username="admin" password="admin-secret";'
+
+      KAFKA_CLUSTERS_2_NAME: SCRAM-SHA-512
+      KAFKA_CLUSTERS_2_BOOTSTRAPSERVERS: kafka:19092
+      KAFKA_CLUSTERS_2_PROPERTIES_SECURITY_PROTOCOL: SASL_PLAINTEXT
+      KAFKA_CLUSTERS_2_PROPERTIES_SASL_MECHANISM: SCRAM-SHA-512
+      KAFKA_CLUSTERS_2_PROPERTIES_SASL_JAAS_CONFIG: 'org.apache.kafka.common.security.scram.ScramLoginModule required username="admin" password="admin-secret";'
+
+volumes:
+  kafka-data:

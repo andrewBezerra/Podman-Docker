@@ -1,0 +1,25 @@
+version: '3.9'
+
+services:
+  mysql:
+    image: mysql:latest
+    container_name: mysql-community
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpassword # altere para uma senha forte
+      MYSQL_DATABASE: mydb              # opcional
+      MYSQL_USER: user                  # opcional
+      MYSQL_PASSWORD: userpassword      # opcional
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+    networks:
+      - bridge-net
+
+volumes:
+  mysql_data:
+
+networks:
+  bridge-net:
+    driver: bridge

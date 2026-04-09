@@ -1,0 +1,24 @@
+name: database-local
+services:
+  redis:
+    image: redis:latest
+    deploy:
+      resources:
+        limits:
+          cpus: "0.50"
+          memory: 512M
+        reservations:
+          cpus: "0.25"
+          memory: 256M
+    container_name: redis-microservices
+    hostname: redis-microservices
+    ports:
+      - "6379:6379"
+    environment:
+      - ACCEPT_EULA=Y
+    networks:
+      - microservices-net
+
+networks:
+  microservices-net:
+    driver: bridge

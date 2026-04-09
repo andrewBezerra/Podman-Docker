@@ -1,0 +1,43 @@
+Passo a passo para expor corretamente um site do Podman para outro PC na rede:
+🛠️ 1. Veja o IP real da VM do Podman
+Rode:
+
+
+podman machine ssh
+Isso vai te logar dentro da VM Linux que o Podman está usando. Agora execute:
+
+ip a
+Procure por algo como:
+
+makefile
+eth0: inet 192.168.127.2
+Esse IP (por exemplo 192.168.127.2) é o endereço interno da VM Podman.
+
+🌐 2. Rode o container com a porta exposta dentro da VM
+Ainda dentro da VM:
+
+podman run -d -p 8080:80 nginx
+Teste no shell da VM:
+
+
+curl localhost:8080
+Se retornar o HTML do Nginx, o container está funcionando.
+
+🚫 Agora o problema: O Windows não acessa diretamente a rede da VM
+...e por isso outros PCs da rede também não acessam.
+
+✅ Solução: Configurar redirecionamento com netsh no Windows
+Você deve dizer ao Windows:
+
+"Qualquer coisa que vier na porta 8080, redirecione para a VM (ex: 192.168.127.2:8080)"
+
+No PowerShell como Administrador, rode:
+
+netsh interface portproxy add v4tov4 listenport=8080 listenaddress=0.0.0.0 connectport=8080 connectaddress=192.168.127.2
+➡️ Troque 192.168.127.2 pelo IP que você viu dentro da VM
+➡️ Troque 8080 se estiver usando outra porta
+
+
+Remover redirecionamento depois (opcional)
+
+netsh interface portproxy delete v4tov4 listenport=8080 listenaddress=0.0.0.0

@@ -1,0 +1,26 @@
+name: database-local
+services:
+  mssql:
+    image: mcr.microsoft.com/mssql/server:2019-latest
+    deploy:
+      resources:
+        limits:
+          cpus: "0.50"
+          memory: 1536M
+        reservations:
+          cpus: "0.25"
+          memory: 1024M
+    container_name: mssql-microservices
+    hostname: mssql-microservices
+    environment:
+      - ACCEPT_EULA=Y
+      - MSSQL_PID=Developer
+      - SA_PASSWORD=ABC123teste
+    ports:
+      - "1433:1433"
+    networks:
+      - microservices-net
+
+networks:
+  microservices-net:
+    driver: bridge

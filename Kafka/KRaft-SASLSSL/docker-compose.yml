@@ -1,0 +1,174 @@
+version: "3.5"
+
+networks:
+  kafka-network:
+    driver: bridge
+
+services:
+  kafka-gen:
+    image: confluentinc/cp-kafka:7.5.0
+    hostname: kafka-gen
+    container_name: kafka-gen
+    networks:
+      - kafka-network
+    volumes:
+      - ./scripts/create_cluster_id.sh:/tmp/create_cluster_id.sh
+      - ./clusterID:/tmp/clusterID
+    command: "bash -c '/tmp/create_cluster_id.sh'"
+
+  kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    hostname: kafka
+    container_name: kafka
+    networks:
+      - kafka-network
+    depends_on:
+      - kafka-gen
+    ports:
+      - "39093:39093"
+      - "19093:19093"
+    environment:
+      CLUSTER_ID: "vRSrPl6TRIusn12aG21giQ"
+      KAFKA_NODE_ID: 1
+      KAFKA_CONTROLLER_QUORUM_VOTERS: "1@kafka:29092"
+      KAFKA_PROCESS_ROLES: "controller,broker"
+      KAFKA_INTER_BROKER_LISTENER_NAME: BROKER
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+
+      KAFKA_METADATA_LOG_SEGMENT_MS: 15000
+      KAFKA_METADATA_MAX_RETENTION_MS: 1200000
+      KAFKA_METADATA_LOG_MAX_RECORD_BYTES_BETWEEN_SNAPSHOTS: 2800
+      KAFKA_LOG_DIRS: "/tmp/kraft-combined-logs"
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+
+      # Replication factors for single broker
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_OFFSETS_TOPIC_NUM_PARTITIONS: 50
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_DEFAULT_REPLICATION_FACTOR: 1
+      KAFKA_MIN_INSYNC_REPLICAS: 1
+
+      # Listeners
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,BROKER:SASL_SSL,EXTERNAL:SASL_SSL
+      KAFKA_LISTENERS: BROKER://kafka:19093,EXTERNAL://0.0.0.0:39093,CONTROLLER://kafka:29092
+      KAFKA_ADVERTISED_LISTENERS: BROKER://kafka:19093,EXTERNAL://localhost:39093
+
+      # SASL Global
+      KAFKA_SASL_ENABLED_MECHANISMS: SCRAM-SHA-512
+      KAFKA_SASL_MECHANISM_INTER_BROKER_PROTOCOL: SCRAM-SHA-512
+      KAFKA_SASL_MECHANISM_CONTROLLER_PROTOCOL: PLAIN
+
+      # ACL Configuration
+      KAFKA_ALLOW_EVERYONE_IF_NO_ACL_FOUND: "false"
+      KAFKA_AUTHORIZER_CLASS_NAME: org.apache.kafka.metadata.authorizer.StandardAuthorizer
+      KAFKA_SUPER_USERS: User:admin;User:client;User:tool;User:ANONYMOUS;
+
+      # SSL Global (aplicado a todos os listeners SSL)
+      KAFKA_SSL_KEYSTORE_FILENAME: kafka.keystore.jks
+      KAFKA_SSL_KEYSTORE_CREDENTIALS: keystore_creds
+      KAFKA_SSL_KEY_CREDENTIALS: key_creds
+      KAFKA_SSL_TRUSTSTORE_FILENAME: kafka.truststore.jks
+      KAFKA_SSL_TRUSTSTORE_CREDENTIALS: truststore_creds
+      KAFKA_SSL_CLIENT_AUTH: none
+      KAFKA_SSL_ENDPOINT_IDENTIFICATION_ALGORITHM: ""
+
+      # SSL para listener BROKER
+      KAFKA_LISTENER_NAME_BROKER_SSL_KEYSTORE_LOCATION: /etc/kafka/secrets/kafka.keystore.jks
+      KAFKA_LISTENER_NAME_BROKER_SSL_KEYSTORE_PASSWORD: kafka-secret
+      KAFKA_LISTENER_NAME_BROKER_SSL_KEY_PASSWORD: kafka-secret
+      KAFKA_LISTENER_NAME_BROKER_SSL_TRUSTSTORE_LOCATION: /etc/kafka/secrets/kafka.truststore.jks
+      KAFKA_LISTENER_NAME_BROKER_SSL_TRUSTSTORE_PASSWORD: kafka-secret
+      KAFKA_LISTENER_NAME_BROKER_SSL_CLIENT_AUTH: none
+      KAFKA_LISTENER_NAME_BROKER_SSL_ENDPOINT_IDENTIFICATION_ALGORITHM: ""
+
+      # SSL para listener EXTERNAL
+      KAFKA_LISTENER_NAME_EXTERNAL_SSL_KEYSTORE_LOCATION: /etc/kafka/secrets/kafka.keystore.jks
+      KAFKA_LISTENER_NAME_EXTERNAL_SSL_KEYSTORE_PASSWORD: kafka-secret
+      KAFKA_LISTENER_NAME_EXTERNAL_SSL_KEY_PASSWORD: kafka-secret
+      KAFKA_LISTENER_NAME_EXTERNAL_SSL_TRUSTSTORE_LOCATION: /etc/kafka/secrets/kafka.truststore.jks
+      KAFKA_LISTENER_NAME_EXTERNAL_SSL_TRUSTSTORE_PASSWORD: kafka-secret
+      KAFKA_LISTENER_NAME_EXTERNAL_SSL_CLIENT_AUTH: none
+      KAFKA_LISTENER_NAME_EXTERNAL_SSL_ENDPOINT_IDENTIFICATION_ALGORITHM: ""
+
+      # SASL para listener BROKER
+      KAFKA_LISTENER_NAME_BROKER_SASL_ENABLED_MECHANISMS: SCRAM-SHA-512
+      KAFKA_LISTENER_NAME_BROKER_SCRAM-SHA-512_SASL_JAAS_CONFIG: 'org.apache.kafka.common.security.scram.ScramLoginModule required username="admin" password="admin-secret" user_admin="admin-secret" user_connect="connect-secret" user_schemaregistry="schemaregistry-secret" user_ksqldb="ksqldb-secret" user_tool="tool-secret";'
+
+      # SASL para listener EXTERNAL
+      KAFKA_LISTENER_NAME_EXTERNAL_SASL_ENABLED_MECHANISMS: SCRAM-SHA-512
+      KAFKA_LISTENER_NAME_EXTERNAL_SCRAM-SHA-512_SASL_JAAS_CONFIG: 'org.apache.kafka.common.security.scram.ScramLoginModule required username="admin" password="admin-secret" user_admin="admin-secret" user_connect="connect-secret" user_schemaregistry="schemaregistry-secret" user_ksqldb="ksqldb-secret" user_tool="tool-secret";'
+
+      # SASL para listener CONTROLLER
+      KAFKA_LISTENER_NAME_CONTROLLER_SASL_ENABLED_MECHANISMS: PLAIN
+      KAFKA_LISTENER_NAME_CONTROLLER_PLAIN_SASL_JAAS_CONFIG: 'org.apache.kafka.common.security.plain.PlainLoginModule required username="admin" password="admin-secret" user_admin="admin-secret";'
+
+      KAFKA_OPTS: "-Djava.security.auth.login.config=/etc/kafka/kafka_server_jaas.conf"
+
+    volumes:
+      - kafka1-data:/var/lib/kafka/data
+      - ./scripts/update_scram_run.sh:/tmp/update_scram_run.sh
+      - ./clusterID:/tmp/clusterID
+      - ./secrets:/etc/kafka/secrets
+    command: "bash -c 'echo kafka-secret > /etc/kafka/secrets/keystore_creds && echo kafka-secret > /etc/kafka/secrets/key_creds && echo kafka-secret > /etc/kafka/secrets/truststore_creds && /tmp/update_scram_run.sh && /etc/confluent/docker/run'"
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "kafka-broker-api-versions --bootstrap-server kafka:19093 || exit 1",
+        ]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+      start_period: 40s
+
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    container_name: kafka-ui
+    hostname: kafka-ui
+    networks:
+      - kafka-network
+    depends_on:
+      kafka:
+        condition: service_healthy
+    ports:
+      - "8080:8080"
+    environment:
+      DYNAMIC_CONFIG_ENABLED: "true"
+      KAFKA_CLUSTERS_0_NAME: SCRAM-SHA-512-SSL
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:19093
+      KAFKA_CLUSTERS_0_PROPERTIES_SECURITY_PROTOCOL: SASL_SSL
+      KAFKA_CLUSTERS_0_PROPERTIES_SASL_MECHANISM: SCRAM-SHA-512
+      KAFKA_CLUSTERS_0_PROPERTIES_SASL_JAAS_CONFIG: 'org.apache.kafka.common.security.scram.ScramLoginModule required username="admin" password="admin-secret";'
+      KAFKA_CLUSTERS_0_SSL_TRUSTSTORELOCATION: /etc/kafka/secrets/kafka.truststore.jks
+      KAFKA_CLUSTERS_0_SSL_TRUSTSTOREPASSWORD: kafka-secret
+      KAFKA_CLUSTERS_0_SCHEMAREGISTRY: http://schema-registry:8081
+    volumes:
+      - ./secrets:/etc/kafka/secrets
+
+  schema-registry:
+    image: confluentinc/cp-schema-registry:7.6.1
+    container_name: schema-registry
+    hostname: schema-registry
+    networks:
+      - kafka-network
+    depends_on:
+      kafka:
+        condition: service_healthy
+    ports:
+      - "8081:8081"
+    environment:
+      SCHEMA_REGISTRY_HOST_NAME: schema-registry
+      SCHEMA_REGISTRY_LISTENERS: http://0.0.0.0:8081
+      SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: SASL_SSL://kafka:19093
+      SCHEMA_REGISTRY_KAFKASTORE_SECURITY_PROTOCOL: SASL_SSL
+      SCHEMA_REGISTRY_KAFKASTORE_SASL_MECHANISM: SCRAM-SHA-512
+      SCHEMA_REGISTRY_KAFKASTORE_SASL_JAAS_CONFIG: 'org.apache.kafka.common.security.scram.ScramLoginModule required username="admin" password="admin-secret";'
+      SCHEMA_REGISTRY_KAFKASTORE_SSL_TRUSTSTORE_LOCATION: /etc/kafka/secrets/kafka.truststore.jks
+      SCHEMA_REGISTRY_KAFKASTORE_SSL_TRUSTSTORE_PASSWORD: kafka-secret
+      SCHEMA_REGISTRY_KAFKASTORE_SSL_ENDPOINT_IDENTIFICATION_ALGORITHM: ""
+    volumes:
+      - ./secrets:/etc/kafka/secrets
+
+volumes:
+  kafka1-data:

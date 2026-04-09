@@ -1,0 +1,190 @@
+version: "3.8"
+
+networks:
+  kafka-network:
+    driver: bridge
+
+services:
+  # ============================================================
+  # KEYCLOAK - OAuth/OIDC Identity Provider
+  # ============================================================
+  keycloak:
+    image: quay.io/keycloak/keycloak:23.0
+    hostname: keycloak
+    container_name: keycloak
+    networks:
+      - kafka-network
+    ports:
+      - "8080:8080"
+    environment:
+      KEYCLOAK_ADMIN: admin
+      KEYCLOAK_ADMIN_PASSWORD: admin
+      KC_HTTP_PORT: 8080
+      KC_HOSTNAME_STRICT: "false"
+      KC_HOSTNAME_STRICT_HTTPS: "false"
+      KC_HTTP_ENABLED: "true"
+      KC_HEALTH_ENABLED: "true"
+    command: start-dev
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "exec 3<>/dev/tcp/127.0.0.1/8080;echo -e 'GET /health/ready HTTP/1.1\r\nhost: 127.0.0.1\r\nConnection: close\r\n\r\n' >&3;grep -q 'HTTP/1.1 200' <&3",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 60s
+
+  # ============================================================
+  # KEYCLOAK CONFIGURATOR
+  # ============================================================
+  keycloak-config:
+    image: alpine:latest
+    container_name: keycloak-config
+    networks:
+      - kafka-network
+    depends_on:
+      keycloak:
+        condition: service_healthy
+    volumes:
+      - ./scripts/configure_keycloak.sh:/scripts/configure_keycloak.sh:ro
+    command: >
+      sh -c "
+      apk add --no-cache curl jq bash > /dev/null 2>&1 &&
+      chmod +x /scripts/configure_keycloak.sh &&
+      /scripts/configure_keycloak.sh
+      "
+    restart: "no"
+
+  # ============================================================
+  # KAFKA CLUSTER ID GENERATOR
+  # ============================================================
+  kafka-gen:
+    image: confluentinc/cp-kafka:7.5.0
+    hostname: kafka-gen
+    container_name: kafka-gen
+    networks:
+      - kafka-network
+    volumes:
+      - ./scripts/create_cluster_id.sh:/tmp/create_cluster_id.sh:ro
+      - ./clusterID:/tmp/clusterID
+    command: "bash -c '/tmp/create_cluster_id.sh'"
+    restart: "no"
+
+  # ============================================================
+  # KAFKA BROKER with OAuth/OIDC
+  # ============================================================
+  kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    hostname: kafka
+    container_name: kafka
+    networks:
+      - kafka-network
+    depends_on:
+      kafka-gen:
+        condition: service_completed_successfully
+      keycloak-config:
+        condition: service_completed_successfully
+    ports:
+      - "9092:9092"
+      - "19092:19092"
+    environment:
+      # Cluster Configuration
+      CLUSTER_ID: "MkU3OEVBNTcwNTJENDM2Qk"
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: "broker,controller"
+      KAFKA_CONTROLLER_QUORUM_VOTERS: "1@kafka:29092"
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_INTER_BROKER_LISTENER_NAME: SASL_PLAINTEXT
+
+      # Listener Configuration
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,SASL_PLAINTEXT:SASL_PLAINTEXT,SASL_PLAINTEXT_HOST:SASL_PLAINTEXT
+      KAFKA_LISTENERS: SASL_PLAINTEXT://kafka:19092,SASL_PLAINTEXT_HOST://0.0.0.0:9092,CONTROLLER://kafka:29092
+      KAFKA_ADVERTISED_LISTENERS: SASL_PLAINTEXT://kafka:19092,SASL_PLAINTEXT_HOST://localhost:9092
+
+      # SASL/OAuth Configuration
+      KAFKA_SASL_ENABLED_MECHANISMS: OAUTHBEARER
+      KAFKA_SASL_MECHANISM_INTER_BROKER_PROTOCOL: OAUTHBEARER
+      KAFKA_SASL_MECHANISM_CONTROLLER_PROTOCOL: PLAIN
+
+      # OAuth for SASL_PLAINTEXT listener (internal)
+      KAFKA_LISTENER_NAME_SASL_PLAINTEXT_SASL_ENABLED_MECHANISMS: OAUTHBEARER
+      KAFKA_LISTENER_NAME_SASL_PLAINTEXT_OAUTHBEARER_SASL_JAAS_CONFIG: 'org.apache.kafka.common.security.oauthbearer.OAuthBearerLoginModule required oauth.jwks.endpoint.uri="http://keycloak:8080/realms/kafka/protocol/openid-connect/certs" oauth.valid.issuer.uri="http://keycloak:8080/realms/kafka" oauth.token.endpoint.uri="http://keycloak:8080/realms/kafka/protocol/openid-connect/token" oauth.client.id="kafka-broker" oauth.client.secret="kafka-broker-secret" oauth.username.claim="preferred_username";'
+      KAFKA_LISTENER_NAME_SASL_PLAINTEXT_OAUTHBEARER_SASL_SERVER_CALLBACK_HANDLER_CLASS: org.apache.kafka.common.security.oauthbearer.secured.OAuthBearerValidatorCallbackHandler
+      KAFKA_LISTENER_NAME_SASL_PLAINTEXT_OAUTHBEARER_SASL_LOGIN_CALLBACK_HANDLER_CLASS: org.apache.kafka.common.security.oauthbearer.secured.OAuthBearerLoginCallbackHandler
+
+      # OAuth for SASL_PLAINTEXT_HOST listener (external)
+      KAFKA_LISTENER_NAME_SASL_PLAINTEXT_HOST_SASL_ENABLED_MECHANISMS: OAUTHBEARER
+      KAFKA_LISTENER_NAME_SASL_PLAINTEXT_HOST_OAUTHBEARER_SASL_JAAS_CONFIG: 'org.apache.kafka.common.security.oauthbearer.OAuthBearerLoginModule required oauth.jwks.endpoint.uri="http://keycloak:8080/realms/kafka/protocol/openid-connect/certs" oauth.valid.issuer.uri="http://keycloak:8080/realms/kafka" oauth.token.endpoint.uri="http://keycloak:8080/realms/kafka/protocol/openid-connect/token" oauth.client.id="kafka-broker" oauth.client.secret="kafka-broker-secret" oauth.username.claim="preferred_username";'
+      KAFKA_LISTENER_NAME_SASL_PLAINTEXT_HOST_OAUTHBEARER_SASL_SERVER_CALLBACK_HANDLER_CLASS: org.apache.kafka.common.security.oauthbearer.secured.OAuthBearerValidatorCallbackHandler
+      KAFKA_LISTENER_NAME_SASL_PLAINTEXT_HOST_OAUTHBEARER_SASL_LOGIN_CALLBACK_HANDLER_CLASS: org.apache.kafka.common.security.oauthbearer.secured.OAuthBearerLoginCallbackHandler
+
+      # Controller Configuration (PLAIN for controller communication)
+      KAFKA_LISTENER_NAME_CONTROLLER_SASL_ENABLED_MECHANISMS: PLAIN
+      KAFKA_LISTENER_NAME_CONTROLLER_PLAIN_SASL_JAAS_CONFIG: 'org.apache.kafka.common.security.plain.PlainLoginModule required username="admin" password="admin-secret" user_admin="admin-secret";'
+
+      # KAFKA_OPTS with JAAS configuration file
+      KAFKA_OPTS: "-Djava.security.auth.login.config=/etc/kafka/kafka_server_jaas.conf"
+
+      # General Kafka Configuration
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_LOG_DIRS: "/tmp/kraft-combined-logs"
+      KAFKA_ALLOW_EVERYONE_IF_NO_ACL_FOUND: "true"
+
+    volumes:
+      - kafka-data:/var/lib/kafka/data
+      - ./scripts/format_storage.sh:/tmp/format_storage.sh:ro
+      - ./scripts/kafka_server_jaas.conf:/etc/kafka/kafka_server_jaas.conf:ro
+      - ./clusterID:/tmp/clusterID
+    command: "bash -c '/tmp/format_storage.sh && /etc/confluent/docker/run'"
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "kafka-broker-api-versions --bootstrap-server kafka:19092 || exit 1",
+        ]
+      interval: 10s
+      timeout: 10s
+      retries: 15
+      start_period: 60s
+
+  # ============================================================
+  # KAFKA UI
+  # ============================================================
+  # ============================================================
+  # KAFKA UI
+  # ============================================================
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    container_name: kafka-ui
+    hostname: kafka-ui
+    networks:
+      - kafka-network
+    depends_on:
+      kafka:
+        condition: service_healthy
+    ports:
+      - "8090:8080"
+    links:
+      - kafka
+      - keycloak
+    environment:
+      DYNAMIC_CONFIG_ENABLED: "true"
+      KAFKA_CLUSTERS_0_NAME: kafka-oauth
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:19092
+      KAFKA_CLUSTERS_0_PROPERTIES_SECURITY_PROTOCOL: SASL_PLAINTEXT
+      KAFKA_CLUSTERS_0_PROPERTIES_SASL_MECHANISM: OAUTHBEARER
+      KAFKA_CLUSTERS_0_PROPERTIES_SASL_LOGIN_CALLBACK_HANDLER_CLASS: org.apache.kafka.common.security.oauthbearer.secured.OAuthBearerLoginCallbackHandler
+      KAFKA_CLUSTERS_0_PROPERTIES_SASL_OAUTHBEARER_TOKEN_ENDPOINT_URL: http://keycloak:8080/realms/kafka/protocol/openid-connect/token
+      KAFKA_CLUSTERS_0_PROPERTIES_SASL_OAUTHBEARER_JWKS_ENDPOINT_URL: http://keycloak:8080/realms/kafka/protocol/openid-connect/certs
+      KAFKA_CLUSTERS_0_PROPERTIES_SASL_OAUTHBEARER_SCOPE_CLAIM_NAME: scope
+      KAFKA_CLUSTERS_0_PROPERTIES_SASL_JAAS_CONFIG: 'org.apache.kafka.common.security.oauthbearer.OAuthBearerLoginModule required clientId="kafka-client" clientSecret="kafka-client-secret";'
+    restart: unless-stopped
+
+volumes:
+  kafka-data:
+    driver: local

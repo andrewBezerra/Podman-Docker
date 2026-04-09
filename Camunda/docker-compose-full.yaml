@@ -1,0 +1,329 @@
+services:
+  # PostgreSQL para Keycloak
+  postgres-identity:
+    image: postgres:15-alpine
+    container_name: postgres-identity
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_DB: bitnami_keycloak
+      POSTGRES_USER: bn_keycloak
+      POSTGRES_PASSWORD: bn_keycloak
+    volumes:
+      - postgres-identity-data:/var/lib/postgresql/data
+    restart: always
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U bn_keycloak -d bitnami_keycloak"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - camunda-platform
+
+  # Elasticsearch
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.13.0
+    container_name: elasticsearch
+    ports:
+      - "9200:9200"
+      - "9300:9300"
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - xpack.security.enrollment.enabled=false
+      - "ES_JAVA_OPTS=-Xms1g -Xmx1g"
+      - cluster.name=camunda-elasticsearch
+      - bootstrap.memory_lock=true
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+      nofile:
+        soft: 65536
+        hard: 65536
+    volumes:
+      - elasticsearch-data:/usr/share/elasticsearch/data
+    restart: always
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "curl -f http://localhost:9200/_cluster/health?wait_for_status=yellow&timeout=5s || exit 1",
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 60s
+    networks:
+      - camunda-platform
+
+  # Keycloak
+  keycloak:
+    image: quay.io/keycloak/keycloak:23.0
+    container_name: keycloak
+    command: start-dev --import-realm
+    ports:
+      - "18080:8080"
+    environment:
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://postgres-identity:5432/bitnami_keycloak
+      KC_DB_USERNAME: bn_keycloak
+      KC_DB_PASSWORD: bn_keycloak
+      KC_HOSTNAME_STRICT: "false"
+      KC_HTTP_ENABLED: "true"
+      KC_HOSTNAME_STRICT_HTTPS: "false"
+      KC_HTTP_RELATIVE_PATH: /auth
+      KEYCLOAK_ADMIN: admin
+      KEYCLOAK_ADMIN_PASSWORD: admin
+    restart: on-failure
+    depends_on:
+      postgres-identity:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "exec 3<>/dev/tcp/127.0.0.1/8080;echo -e 'GET /auth/health/ready HTTP/1.1\r\nhost: http://localhost\r\nConnection: close\r\n\r\n' >&3;if [ $? -eq 0 ]; then echo 'Healthcheck Successful';exit 0;else echo 'Healthcheck Failed';exit 1;fi;",
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 15
+      start_period: 120s
+    networks:
+      - camunda-platform
+
+  # Camunda Identity
+  identity:
+    image: camunda/identity:8.4.5
+    container_name: identity
+    ports:
+      - "8084:8084"
+    environment:
+      KEYCLOAK_URL: http://keycloak:8080/auth
+      IDENTITY_AUTH_PROVIDER_BACKEND_URL: http://keycloak:8080/auth/realms/camunda-platform
+      IDENTITY_AUTH_PROVIDER_ISSUER_URL: http://localhost:18080/auth/realms/camunda-platform
+      IDENTITY_DATABASE_HOST: postgres-identity
+      IDENTITY_DATABASE_PORT: 5432
+      IDENTITY_DATABASE_NAME: bitnami_keycloak
+      IDENTITY_DATABASE_USERNAME: bn_keycloak
+      IDENTITY_DATABASE_PASSWORD: bn_keycloak
+      KEYCLOAK_INIT_ORCHESTRATION_SECRET: zecret
+      KEYCLOAK_INIT_CONNECTORS_SECRET: connectors-secret
+      KEYCLOAK_INIT_CONSOLE_SECRET: console-secret
+      KEYCLOAK_INIT_OPTIMIZE_SECRET: optimize-secret
+      KEYCLOAK_USERS_0_USERNAME: demo
+      KEYCLOAK_USERS_0_PASSWORD: demo
+      KEYCLOAK_USERS_0_FIRST_NAME: Demo
+      KEYCLOAK_USERS_0_LAST_NAME: User
+      KEYCLOAK_USERS_0_EMAIL: demo@camunda.com
+      KEYCLOAK_USERS_0_ROLES_0: Identity
+      KEYCLOAK_USERS_0_ROLES_1: Optimize
+      KEYCLOAK_USERS_0_ROLES_2: Operate
+      KEYCLOAK_USERS_0_ROLES_3: Tasklist
+      RESOURCE_AUTHORIZATIONS_ENABLED: "true"
+      JAVA_TOOL_OPTIONS: "-Xms256m -Xmx512m"
+    restart: on-failure
+    depends_on:
+      keycloak:
+        condition: service_healthy
+      postgres-identity:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "curl -f http://localhost:8084/actuator/health/readiness || exit 1",
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 120s
+    networks:
+      - camunda-platform
+
+  # Zeebe (Camunda Platform 8 - apenas o broker)
+  zeebe:
+    image: camunda/zeebe:8.4.5
+    container_name: zeebe
+    ports:
+      - "26500:26500" # gRPC API
+      - "9600:9600" # REST API
+    environment:
+      ZEEBE_BROKER_GATEWAY_ENABLE: "true"
+      ZEEBE_BROKER_GATEWAY_SECURITY_ENABLED: "false"
+      ZEEBE_BROKER_EXPORTERS_ELASTICSEARCH_CLASSNAME: io.camunda.zeebe.exporter.ElasticsearchExporter
+      ZEEBE_BROKER_EXPORTERS_ELASTICSEARCH_ARGS_URL: http://elasticsearch:9200
+      ZEEBE_BROKER_EXPORTERS_ELASTICSEARCH_ARGS_BULK_SIZE: 1
+      ZEEBE_BROKER_CLUSTER_CLUSTERNAME: camunda-platform
+      JAVA_TOOL_OPTIONS: "-Xms512m -Xmx1024m"
+    restart: on-failure
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "timeout 5s bash -c ':> /dev/tcp/127.0.0.1/9600' || exit 1",
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 60s
+    volumes:
+      - zeebe-data:/usr/local/zeebe/data
+    networks:
+      - camunda-platform
+
+  # Operate
+  operate:
+    image: camunda/operate:8.4.5
+    container_name: operate
+    ports:
+      - "8081:8080"
+    environment:
+      CAMUNDA_OPERATE_ZEEBE_GATEWAYADDRESS: zeebe:26500
+      CAMUNDA_OPERATE_ELASTICSEARCH_URL: http://elasticsearch:9200
+      CAMUNDA_OPERATE_ELASTICSEARCH_CLUSTERNAME: camunda-elasticsearch
+      CAMUNDA_OPERATE_IDENTITY_ISSUER_URL: http://localhost:18080/auth/realms/camunda-platform
+      CAMUNDA_OPERATE_IDENTITY_ISSUER_BACKEND_URL: http://keycloak:8080/auth/realms/camunda-platform
+      CAMUNDA_OPERATE_IDENTITY_CLIENT_ID: zeebe
+      CAMUNDA_OPERATE_IDENTITY_CLIENT_SECRET: zecret
+      CAMUNDA_OPERATE_IDENTITY_AUDIENCE: operate-api
+      SPRING_PROFILES_ACTIVE: identity-auth
+      JAVA_TOOL_OPTIONS: "-Xms512m -Xmx1024m"
+    restart: on-failure
+    depends_on:
+      zeebe:
+        condition: service_healthy
+      elasticsearch:
+        condition: service_healthy
+      identity:
+        condition: service_healthy
+    healthcheck:
+      test:
+        ["CMD-SHELL", "curl -f http://localhost:8080/actuator/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 90s
+    networks:
+      - camunda-platform
+
+  # Tasklist
+  tasklist:
+    image: camunda/tasklist:8.4.5
+    container_name: tasklist
+    ports:
+      - "8082:8080"
+    environment:
+      CAMUNDA_TASKLIST_ZEEBE_GATEWAYADDRESS: zeebe:26500
+      CAMUNDA_TASKLIST_ELASTICSEARCH_URL: http://elasticsearch:9200
+      CAMUNDA_TASKLIST_ELASTICSEARCH_CLUSTERNAME: camunda-elasticsearch
+      CAMUNDA_TASKLIST_IDENTITY_ISSUER_URL: http://localhost:18080/auth/realms/camunda-platform
+      CAMUNDA_TASKLIST_IDENTITY_ISSUER_BACKEND_URL: http://keycloak:8080/auth/realms/camunda-platform
+      CAMUNDA_TASKLIST_IDENTITY_CLIENT_ID: zeebe
+      CAMUNDA_TASKLIST_IDENTITY_CLIENT_SECRET: zecret
+      CAMUNDA_TASKLIST_IDENTITY_AUDIENCE: tasklist-api
+      SPRING_PROFILES_ACTIVE: identity-auth
+      JAVA_TOOL_OPTIONS: "-Xms512m -Xmx1024m"
+    restart: on-failure
+    depends_on:
+      zeebe:
+        condition: service_healthy
+      elasticsearch:
+        condition: service_healthy
+      identity:
+        condition: service_healthy
+    healthcheck:
+      test:
+        ["CMD-SHELL", "curl -f http://localhost:8080/actuator/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 90s
+    networks:
+      - camunda-platform
+
+  # Connectors
+  connectors:
+    image: camunda/connectors-bundle:8.4.5
+    container_name: connectors
+    ports:
+      - "8085:8080"
+    environment:
+      ZEEBE_CLIENT_BROKER_GATEWAY_ADDRESS: zeebe:26500
+      ZEEBE_CLIENT_SECURITY_PLAINTEXT: "true"
+      CAMUNDA_OPERATE_CLIENT_URL: http://operate:8080
+      CAMUNDA_OPERATE_CLIENT_USERNAME: demo
+      CAMUNDA_OPERATE_CLIENT_PASSWORD: demo
+      CAMUNDA_IDENTITY_TYPE: KEYCLOAK
+      CAMUNDA_IDENTITY_ISSUER_BACKEND_URL: http://keycloak:8080/auth/realms/camunda-platform
+      CAMUNDA_IDENTITY_CLIENT_ID: connectors
+      CAMUNDA_IDENTITY_CLIENT_SECRET: connectors-secret
+      CAMUNDA_IDENTITY_AUDIENCE: connectors-api
+      JAVA_TOOL_OPTIONS: "-Xms256m -Xmx512m"
+    restart: on-failure
+    depends_on:
+      zeebe:
+        condition: service_healthy
+      identity:
+        condition: service_healthy
+    healthcheck:
+      test:
+        ["CMD-SHELL", "curl -f http://localhost:8080/actuator/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    networks:
+      - camunda-platform
+
+  # Optimize
+  optimize:
+    image: camunda/optimize:8.4.5
+    container_name: optimize
+    ports:
+      - "8090:8090"
+    environment:
+      CAMUNDA_OPTIMIZE_ZEEBE_ENABLED: "true"
+      CAMUNDA_OPTIMIZE_ZEEBE_NAME: zeebe-broker
+      CAMUNDA_OPTIMIZE_ZEEBE_PARTITION_COUNT: 1
+      CAMUNDA_OPTIMIZE_ELASTICSEARCH_HOST: elasticsearch
+      CAMUNDA_OPTIMIZE_ELASTICSEARCH_HTTP_PORT: 9200
+      CAMUNDA_OPTIMIZE_IDENTITY_ISSUER_URL: http://localhost:18080/auth/realms/camunda-platform
+      CAMUNDA_OPTIMIZE_IDENTITY_ISSUER_BACKEND_URL: http://keycloak:8080/auth/realms/camunda-platform
+      CAMUNDA_OPTIMIZE_IDENTITY_CLIENT_ID: optimize
+      CAMUNDA_OPTIMIZE_IDENTITY_CLIENT_SECRET: optimize-secret
+      CAMUNDA_OPTIMIZE_IDENTITY_AUDIENCE: optimize-api
+      CAMUNDA_OPTIMIZE_API_AUDIENCE: optimize-api
+      SPRING_PROFILES_ACTIVE: ccsm
+      JAVA_TOOL_OPTIONS: "-Xms512m -Xmx1024m"
+    restart: on-failure
+    depends_on:
+      zeebe:
+        condition: service_healthy
+      elasticsearch:
+        condition: service_healthy
+      identity:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8090/api/readyz || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 120s
+    volumes:
+      - optimize-data:/optimize/data
+    networks:
+      - camunda-platform
+
+volumes:
+  postgres-identity-data:
+  elasticsearch-data:
+  zeebe-data:
+  optimize-data:
+
+networks:
+  camunda-platform:
+    driver: bridge

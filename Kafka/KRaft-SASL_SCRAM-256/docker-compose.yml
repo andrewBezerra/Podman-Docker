@@ -1,0 +1,134 @@
+version: "3.5"
+
+networks:
+  kafka-network:
+    driver: bridge
+
+services:
+  kafka-gen:
+    image: confluentinc/cp-kafka:7.5.0
+    hostname: kafka-gen
+    container_name: kafka-gen
+    networks:
+      - kafka-network
+    volumes:
+      - ./scripts/create_cluster_id.sh:/tmp/create_cluster_id.sh
+      - ./clusterID:/tmp/clusterID
+    command: "bash -c '/tmp/create_cluster_id.sh'"
+
+  kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    hostname: kafka
+    container_name: kafka
+    networks:
+      - kafka-network
+    depends_on:
+      - kafka-gen
+    ports:
+      - "39092:39092"
+      - "19092:19092" # Porta interna também exposta (opcional)
+    environment:
+      CLUSTER_ID: "vRSrPl6TRIusn12aG21giQ"
+      KAFKA_NODE_ID: 1
+      KAFKA_CONTROLLER_QUORUM_VOTERS: "1@kafka:29092"
+      KAFKA_PROCESS_ROLES: "controller,broker"
+      KAFKA_INTER_BROKER_LISTENER_NAME: BROKER
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+
+      KAFKA_METADATA_LOG_SEGMENT_MS: 15000
+      KAFKA_METADATA_MAX_RETENTION_MS: 1200000
+      KAFKA_METADATA_LOG_MAX_RECORD_BYTES_BETWEEN_SNAPSHOTS: 2800
+      KAFKA_LOG_DIRS: "/tmp/kraft-combined-logs"
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+
+      # Replication factors for single broker
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_OFFSETS_TOPIC_NUM_PARTITIONS: 50
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_DEFAULT_REPLICATION_FACTOR: 1
+      KAFKA_MIN_INSYNC_REPLICAS: 1
+
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,BROKER:SASL_PLAINTEXT,EXTERNAL:SASL_PLAINTEXT
+      KAFKA_LISTENERS: BROKER://kafka:19092,EXTERNAL://0.0.0.0:39092,CONTROLLER://kafka:29092
+      KAFKA_ADVERTISED_LISTENERS: BROKER://kafka:19092,EXTERNAL://localhost:39092
+
+      # PROTOCOL settings
+      KAFKA_SASL_ENABLED_MECHANISMS: PLAIN,SCRAM-SHA-256
+      KAFKA_SASL_MECHANISM_INTER_BROKER_PROTOCOL: SCRAM-SHA-256
+      KAFKA_SASL_MECHANISM_CONTROLLER_PROTOCOL: PLAIN
+
+      KAFKA_ALLOW_EVERYONE_IF_NO_ACL_FOUND: "false"
+      KAFKA_AUTHORIZER_CLASS_NAME: org.apache.kafka.metadata.authorizer.StandardAuthorizer
+      KAFKA_SUPER_USERS: User:admin;User:client;User:tool;User:ANONYMOUS;
+
+      KAFKA_LISTENER_NAME_BROKER_SASL_ENABLED_MECHANISMS: SCRAM-SHA-256
+      KAFKA_LISTENER_NAME_BROKER_SCRAM-SHA-256_SASL_JAAS_CONFIG: 'org.apache.kafka.common.security.scram.ScramLoginModule required username="admin" password="admin-secret" user_admin="admin-secret" user_connect="connect-secret" user_schemaregistry="schemaregistry-secret" user_ksqldb="ksqldb-secret" user_tool="tool-secret";'
+
+      KAFKA_LISTENER_NAME_EXTERNAL_SASL_ENABLED_MECHANISMS: SCRAM-SHA-256
+      KAFKA_LISTENER_NAME_EXTERNAL_SCRAM-SHA-256_SASL_JAAS_CONFIG: 'org.apache.kafka.common.security.scram.ScramLoginModule required username="admin" password="admin-secret" user_admin="admin-secret" user_connect="connect-secret" user_schemaregistry="schemaregistry-secret" user_ksqldb="ksqldb-secret" user_tool="tool-secret";'
+
+      KAFKA_OPTS: "-Djava.security.auth.login.config=/etc/kafka/kafka_server_jaas.conf"
+
+    volumes:
+      - kafka1-data:/var/lib/kafka/data
+      - ./scripts/update_scram_run.sh:/tmp/update_scram_run.sh
+      - ./clusterID:/tmp/clusterID
+    command: "bash -c '/tmp/update_scram_run.sh && /etc/confluent/docker/run'"
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "kafka-broker-api-versions --bootstrap-server kafka:19092 --command-config /etc/kafka/client.properties || exit 1",
+        ]
+      interval: 10s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    container_name: kafka-ui
+    hostname: kafka-ui
+    networks:
+      - kafka-network
+    depends_on:
+      kafka:
+        condition: service_healthy
+    ports:
+      - "8080:8080"
+    environment:
+      DYNAMIC_CONFIG_ENABLED: "true"
+
+      # Cluster 1: SCRAM-SHA-256
+      KAFKA_CLUSTERS_0_NAME: SCRAM-SHA-256
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:19092
+      KAFKA_CLUSTERS_0_PROPERTIES_SECURITY_PROTOCOL: SASL_PLAINTEXT
+      KAFKA_CLUSTERS_0_PROPERTIES_SASL_MECHANISM: SCRAM-SHA-256
+      KAFKA_CLUSTERS_0_PROPERTIES_SASL_JAAS_CONFIG: 'org.apache.kafka.common.security.scram.ScramLoginModule required username="admin" password="admin-secret";'
+      KAFKA_CLUSTERS_0_SCHEMAREGISTRY: http://schema-registry:8081
+
+    volumes:
+      - ./certs:/etc/kafka/secrets
+
+  schema-registry:
+    image: confluentinc/cp-schema-registry:7.6.1
+    container_name: schema-registry
+    hostname: schema-registry
+    networks:
+      - kafka-network
+    depends_on:
+      kafka:
+        condition: service_healthy
+    ports:
+      - "8081:8081"
+    environment:
+      SCHEMA_REGISTRY_HOST_NAME: schema-registry
+      SCHEMA_REGISTRY_LISTENERS: http://0.0.0.0:8081
+      SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: SASL_PLAINTEXT://kafka:19092
+      SCHEMA_REGISTRY_KAFKASTORE_SECURITY_PROTOCOL: SASL_PLAINTEXT
+      SCHEMA_REGISTRY_KAFKASTORE_SASL_MECHANISM: SCRAM-SHA-256
+      SCHEMA_REGISTRY_KAFKASTORE_SASL_JAAS_CONFIG: 'org.apache.kafka.common.security.scram.ScramLoginModule required username="admin" password="admin-secret";'
+
+volumes:
+  kafka1-data:
