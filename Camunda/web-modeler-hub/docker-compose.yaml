@@ -40,7 +40,7 @@ services:
       start_period: 30s
     environment:
       APP_NAME: "Hub Self-Managed WebSockets"
-      APP_DEBUG: "true"
+      APP_DEBUG: "false"
       PUSHER_APP_ID: ${HUB_PUSHER_APP_ID}
       PUSHER_APP_KEY: ${HUB_PUSHER_KEY}
       PUSHER_APP_SECRET: ${HUB_PUSHER_SECRET}
