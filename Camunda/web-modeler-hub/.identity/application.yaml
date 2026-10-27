@@ -190,7 +190,7 @@ keycloak:
           - "/auth/login-callback"
   users:
     - username: "demo"
-      password: "demo"
+      password: "${IDENTITY_DEMO_PASSWORD}"
       firstName: "Demo"
       lastName: "User"
       email: "demo@example.org"
@@ -219,10 +219,8 @@ management:
   endpoints:
     web:
       exposure:
-        include: health,configprops
+        include: health
   endpoint:
-    configprops:
-      show-values: ALWAYS
     health:
       probes:
         enabled: true

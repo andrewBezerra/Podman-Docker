@@ -25,15 +25,15 @@ As versões ficam no `.env` (`CAMUNDA_HUB_VERSION`, `CAMUNDA_IDENTITY_VERSION`, 
 ## Como subir
 
 ```sh
-cp .env.example .env   # valores demo da distribuição; troque os segredos para uso sério
+cp .env.example .env   # preencha os segredos (os campos "troque-...")
 docker compose up -d   # ou: docker-compose up -d (v2 pelo socket do podman)
 ```
 
 A ordem de dependência já está no compose: postgres → keycloak → identity (cria o realm
 `camunda-platform` e os clients, incl. `web-modeler`) → hub.
 
-- **Web Modeler:** http://localhost:8070 — login `demo` / `demo`.
-- **Keycloak (admin):** http://localhost:18080/auth — `admin` / `admin`.
+- **Web Modeler:** http://localhost:8070 — usuário `demo` (senha no `.env`, `IDENTITY_DEMO_PASSWORD`).
+- **Keycloak (admin):** http://localhost:18080/auth — usuário/senha no `.env` (`KEYCLOAK_ADMIN_USER`/`KEYCLOAK_ADMIN_PASSWORD`).
 - **Mailpit (e-mails do Modeler):** http://localhost:8075
 
 ## Consistência do issuer

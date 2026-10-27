@@ -51,10 +51,8 @@ management:
   endpoints:
     web:
       exposure:
-        include: health,configprops,info
+        include: health,info
   endpoint:
-    configprops:
-      show-values: ALWAYS
     health:
       probes:
         enabled: true

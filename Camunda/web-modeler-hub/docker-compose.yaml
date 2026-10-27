@@ -60,8 +60,7 @@ services:
     container_name: mailpit
     image: axllent/mailpit:${MAILPIT_VERSION}
     ports:
-      - "1025:1025"
-      - "8075:8025"
+      - "127.0.0.1:8075:8025"
     restart: on-failure
     healthcheck:
       test: ["CMD", "/usr/bin/nc", "-z", "localhost", "1025"]
